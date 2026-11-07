@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 
-async function evaluate({ core, host, token, taskFile, fetchImpl = fetch, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), attempts = 60 }) {
+async function evaluate({ core, host, token, taskFile, ignoreCoverageFailure = false, fetchImpl = fetch, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), attempts = 60 }) {
   if (!token) throw new Error('Missing SONAR_TOKEN');
   const base = new URL(host);
   if (base.protocol !== 'https:' || base.username || base.password) throw new Error('SONAR_HOST_URL must be HTTPS without embedded credentials');
@@ -26,14 +26,30 @@ async function evaluate({ core, host, token, taskFile, fetchImpl = fetch, sleep 
   if (!analysisId) throw new Error('SonarQube compute task timed out');
   const data = await get('qualitygates/project_status', { analysisId });
   if (!data.projectStatus?.status) throw new Error('Missing Quality Gate result');
-  fs.writeFileSync('sonar-quality-gate.json', JSON.stringify(data, null, 2));
   const gate = data.projectStatus;
+  const failedConditions = (gate.conditions || []).filter(condition => condition.status === 'ERROR');
+  const ignoredCoverage = gate.status === 'ERROR' && ignoreCoverageFailure && failedConditions.length > 0 &&
+    failedConditions.every(condition => /coverage/i.test(condition.metricKey || ''));
+  if (ignoredCoverage) {
+    data.temporaryPolicyException = {
+      applied: true,
+      reason: 'Coverage was the only failing Quality Gate condition; test coverage reports are not integrated yet.'
+    };
+    core.setOutput('coverage_exception', 'true');
+    core.warning('Temporary exception: Sonar coverage-only Quality Gate failure accepted until coverage reports are integrated.');
+  } else {
+    data.temporaryPolicyException = { applied: false };
+    core.setOutput('coverage_exception', 'false');
+  }
+  fs.writeFileSync('sonar-quality-gate.json', JSON.stringify(data, null, 2));
   core.setOutput('gate', gate.status);
   const cell = value => String(value ?? '-').replace(/[<>&|\r\n]/g, ' ');
-  await core.summary.addHeading('SonarQube · Quality Gate').addRaw(`Status: ${cell(gate.status)}\n`).addTable([
+  await core.summary.addHeading('SonarQube · Quality Gate').addRaw(`Status: ${cell(gate.status)}${ignoredCoverage ? ' (temporary coverage exception)' : ''}\n`).addTable([
     ['Metric', 'Observed', 'Threshold', 'Status'],
     ...(gate.conditions || []).map(c => [c.metricKey, c.actualValue, c.errorThreshold, c.status].map(cell))
-  ]).addRaw('\nIncludes configured security, reliability and maintainability conditions; hotspots require human review.\n').write();
-  if (gate.status !== 'OK') core.setFailed(`SonarQube Quality Gate: ${gate.status}`);
+  ]).addRaw(ignoredCoverage
+    ? '\nTemporary exception applied: coverage was the only failing condition. Security, reliability and maintainability conditions remain enforced. Remove this exception after JaCoCo/LCOV reports are integrated.\n'
+    : '\nIncludes configured security, reliability and maintainability conditions; hotspots require human review.\n').write();
+  if (gate.status !== 'OK' && !ignoredCoverage) core.setFailed(`SonarQube Quality Gate: ${gate.status}`);
 }
 module.exports = { evaluate };
