@@ -17,16 +17,13 @@ async function publish({ github, context, core, needs, technology, language, hos
   const run = `${context.serverUrl || 'https://github.com'}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
   const security = `${context.serverUrl || 'https://github.com'}/${context.repo.owner}/${context.repo.repo}/security/code-scanning`;
   const cell = value => String(value ?? 'unavailable').replace(/[<>&|`\r\n]/g, ' ');
-  const coverageException = needs.sonar_gate?.outputs?.coverage_exception === 'true';
-  const label = !result.valid ? '⛔ Invalid analysis context' : !result.pass ? '⛔ Promotion blocked' : coverageException ? '⚠️ Checks passed with temporary coverage exception' : result.failed.length ? '⚠️ Advisory findings or incomplete analyses' : '✅ Security checks passed';
+  const label = !result.valid ? '⛔ Invalid analysis context' : !result.pass ? '⛔ Promotion blocked' : result.failed.length ? '⚠️ Advisory findings or incomplete analyses' : '✅ Security checks passed';
   const rows = stages.map(([id, title]) => {
     const job = needs[id];
     const state = job?.outputs?.outcome || job?.result || 'missing';
     let details = 'See job logs and report artifacts';
     if (id === 'ghas_sast' && job?.outputs?.high !== undefined && job.outputs.high !== '') details = `High: ${job.outputs.high}; critical: ${job.outputs.critical}`;
-    if (id === 'sonar_gate' && job?.outputs?.gate) details = job.outputs.coverage_exception === 'true'
-      ? `Gate: ${job.outputs.gate}; temporary coverage-only exception applied`
-      : `Gate: ${job.outputs.gate}`;
+    if (id === 'sonar_gate' && job?.outputs?.gate) details = `Gate: ${job.outputs.gate}`;
     if (id === 'ghas_sca' && job?.outputs?.vulnerabilities !== undefined && job.outputs.vulnerabilities !== '') details = `Vulnerable dependency changes: ${job.outputs.vulnerabilities}`;
     return `| ${title} | ${state === 'success' ? '✅' : '⚠️'} ${cell(state)} | ${cell(details)} |`;
   });
@@ -46,7 +43,6 @@ async function publish({ github, context, core, needs, technology, language, hos
     '- CodeQL analyzes the selected language; high/critical findings in the scanned source fail its gate (including existing findings).\n' +
     '- Dependency Review evaluates dependency changes and high/critical known vulnerabilities, not a complete inventory scan.\n' +
     '- SonarQube evaluates new-code conditions configured in its Quality Gate. Security hotspots need human review.\n' +
-    '- If shown, the temporary Sonar coverage exception accepts only a coverage-only failure until coverage reports are integrated.\n' +
     '- Failed, missing, cancelled or skipped mandatory analyses never count as passed.\n' +
     '- Unit tests remain in develop and pre-deployment CI; this PR pipeline focuses on static security and code quality.\n\n</details>\n\n' +
     `Analyzed PR head: \`${cell(context.payload.pull_request?.head?.sha)}\` · Run attempt: ${cell(process.env.GITHUB_RUN_ATTEMPT || '1')}\n`;

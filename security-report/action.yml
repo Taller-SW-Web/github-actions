@@ -16,9 +16,6 @@ inputs:
   task_file:
     description: SonarQube scanner compute task metadata
     default: sonar-task/report-task.txt
-  ignore_coverage_failure:
-    description: Temporarily accept the Sonar Quality Gate only when coverage is the sole failing condition
-    default: 'false'
   results:
     description: JSON of workflow needs for the consolidated report
     default: '{}'
@@ -50,7 +47,6 @@ runs:
         SONAR_HOST_URL: ${{ inputs.sonar_host_url }}
         SONAR_TOKEN: ${{ inputs.sonar_token }}
         SONAR_TASK_FILE: ${{ inputs.task_file }}
-        IGNORE_COVERAGE_FAILURE: ${{ inputs.ignore_coverage_failure }}
         ANALYSIS_RESULTS: ${{ inputs.results }}
         ANALYSIS_TECHNOLOGY: ${{ inputs.technology }}
         ANALYSIS_LANGUAGE: ${{ inputs.language }}
@@ -62,8 +58,7 @@ runs:
             await load('sarif.cjs').run(core, process.env.SARIF_DIRECTORY);
           } else if (process.env.REPORT_MODE === 'sonar') {
             await load('sonar.cjs').evaluate({ core, host: process.env.SONAR_HOST_URL,
-              token: process.env.SONAR_TOKEN, taskFile: process.env.SONAR_TASK_FILE,
-              ignoreCoverageFailure: process.env.IGNORE_COVERAGE_FAILURE === 'true' });
+              token: process.env.SONAR_TOKEN, taskFile: process.env.SONAR_TASK_FILE });
           } else if (process.env.REPORT_MODE === 'pull-request') {
             await load('pr.cjs').publish({ github, context, core, needs: JSON.parse(process.env.ANALYSIS_RESULTS),
               technology: process.env.ANALYSIS_TECHNOLOGY, language: process.env.ANALYSIS_LANGUAGE,
