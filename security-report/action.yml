@@ -1,0 +1,66 @@
+name: Security Analysis Reporting
+description: Evaluate analyzer reports and publish the consolidated security policy result.
+inputs:
+  mode:
+    description: sarif, sonar or pull-request
+    required: true
+  sarif_directory:
+    description: Directory containing CodeQL SARIF files
+    default: codeql-results
+  sonar_host_url:
+    description: Trusted SonarQube server URL
+    default: ''
+  sonar_token:
+    description: SonarQube analysis token with permission to read the project gate
+    default: ''
+  task_file:
+    description: SonarQube scanner compute task metadata
+    default: sonar-task/report-task.txt
+  results:
+    description: JSON of workflow needs for the consolidated report
+    default: '{}'
+  technology:
+    description: Build technology
+    default: ''
+  language:
+    description: Source language
+    default: ''
+outputs:
+  high:
+    description: CodeQL high severity findings
+    value: ${{ steps.report.outputs.high }}
+  critical:
+    description: CodeQL critical severity findings
+    value: ${{ steps.report.outputs.critical }}
+  gate:
+    description: SonarQube Quality Gate status
+    value: ${{ steps.report.outputs.gate }}
+runs:
+  using: composite
+  steps:
+    - id: report
+      uses: actions/github-script@v7
+      env:
+        REPORT_ACTION_PATH: ${{ github.action_path }}
+        REPORT_MODE: ${{ inputs.mode }}
+        SARIF_DIRECTORY: ${{ inputs.sarif_directory }}
+        SONAR_HOST_URL: ${{ inputs.sonar_host_url }}
+        SONAR_TOKEN: ${{ inputs.sonar_token }}
+        SONAR_TASK_FILE: ${{ inputs.task_file }}
+        ANALYSIS_RESULTS: ${{ inputs.results }}
+        ANALYSIS_TECHNOLOGY: ${{ inputs.technology }}
+        ANALYSIS_LANGUAGE: ${{ inputs.language }}
+      with:
+        script: |
+          const path = require('node:path');
+          const load = name => require(path.join(process.env.REPORT_ACTION_PATH, name));
+          if (process.env.REPORT_MODE === 'sarif') {
+            await load('sarif.cjs').run(core, process.env.SARIF_DIRECTORY);
+          } else if (process.env.REPORT_MODE === 'sonar') {
+            await load('sonar.cjs').evaluate({ core, host: process.env.SONAR_HOST_URL,
+              token: process.env.SONAR_TOKEN, taskFile: process.env.SONAR_TASK_FILE });
+          } else if (process.env.REPORT_MODE === 'pull-request') {
+            await load('pr.cjs').publish({ github, context, core, needs: JSON.parse(process.env.ANALYSIS_RESULTS),
+              technology: process.env.ANALYSIS_TECHNOLOGY, language: process.env.ANALYSIS_LANGUAGE,
+              host: process.env.SONAR_HOST_URL });
+          } else throw new Error('Unsupported security report mode');

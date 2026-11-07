@@ -1,0 +1,33 @@
+name: Production Deployment Authorization
+description: Verify GitHub team membership for every deployment and release provenance for rollback.
+inputs:
+  rollback:
+    description: Whether to restore a previous release
+    default: 'false'
+  release_tag:
+    description: Previously deployed production tag
+    default: ''
+  token:
+    description: Token with organization Members read and repository Contents and Actions read access
+    required: true
+outputs:
+  source_sha:
+    description: Immutable commit authorized for deployment
+    value: ${{ steps.validate.outputs.source_sha }}
+runs:
+  using: composite
+  steps:
+    - id: validate
+      uses: actions/github-script@v7
+      env:
+        VALIDATOR_PATH: ${{ github.action_path }}/execute.cjs
+        ROLLBACK: ${{ inputs.rollback }}
+        RELEASE_TAG: ${{ inputs.release_tag }}
+        TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+      with:
+        github-token: ${{ inputs.token }}
+        script: |
+          await require(process.env.VALIDATOR_PATH)({
+            github, context, core, rollback: process.env.ROLLBACK === 'true',
+            tag: process.env.RELEASE_TAG, triggeringActor: process.env.TRIGGERING_ACTOR
+          });

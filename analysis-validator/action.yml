@@ -1,0 +1,39 @@
+name: Analysis Policy Validation
+description: Select analyses and enforce the promotion policy from the actual event.
+inputs:
+  technology:
+    description: maven or node
+    required: true
+  language:
+    description: java, javascript or typescript; inferred only for legacy CI callers
+    default: ''
+outputs:
+  codeql_language:
+    description: CodeQL language identifier
+    value: ${{ steps.policy.outputs.codeql_language }}
+  codeql_build_mode:
+    description: CodeQL extraction strategy
+    value: ${{ steps.policy.outputs.codeql_build_mode }}
+  blocking:
+    description: Whether analysis failures block promotion
+    value: ${{ steps.policy.outputs.blocking }}
+  sonar:
+    description: Run SonarQube
+    value: ${{ steps.policy.outputs.sonar }}
+  dependency_review:
+    description: Run dependency review
+    value: ${{ steps.policy.outputs.dependency_review }}
+runs:
+  using: composite
+  steps:
+    - id: policy
+      uses: actions/github-script@v7
+      env:
+        POLICY_PATH: ${{ github.action_path }}/policy.cjs
+        TECHNOLOGY: ${{ inputs.technology }}
+        LANGUAGE: ${{ inputs.language }}
+      with:
+        script: |
+          const result = require(process.env.POLICY_PATH)(context, process.env.TECHNOLOGY, process.env.LANGUAGE);
+          for (const [key, value] of Object.entries(result)) core.setOutput(key, String(value));
+          await core.summary.addHeading('Analysis policy').addRaw(JSON.stringify(result)).write();
