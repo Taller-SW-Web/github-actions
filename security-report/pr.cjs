@@ -10,15 +10,18 @@ function decision(needs) {
   const valid = needs.validation?.result === 'success';
   const blocking = needs.validation?.outputs?.blocking !== 'false';
   const failed = stages.filter(([id]) => needs[id]?.result !== 'success' || needs[id]?.outputs?.outcome !== 'success').map(([id]) => id);
-  return { valid, blocking, failed, pass: valid && (!blocking || failed.length === 0) };
+  const buildTest = needs.build_test?.result;
+  const buildTestPassed = buildTest === undefined || buildTest === 'success';
+  return { valid, blocking, failed, buildTest, buildTestPassed,
+    pass: valid && buildTestPassed && (!blocking || failed.length === 0) };
 }
 async function publish({ github, context, core, needs, technology, language, host }) {
   const result = decision(needs);
   const run = `${context.serverUrl || 'https://github.com'}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
   const security = `${context.serverUrl || 'https://github.com'}/${context.repo.owner}/${context.repo.repo}/security/code-scanning`;
   const cell = value => String(value ?? 'unavailable').replace(/[<>&|`\r\n]/g, ' ');
-  const label = !result.valid ? '⛔ Invalid analysis context' : !result.pass ? '⛔ Promotion blocked' : result.failed.length ? '⚠️ Advisory findings or incomplete analyses' : '✅ Security checks passed';
-  const rows = stages.map(([id, title]) => {
+  const label = !result.valid ? '⛔ Invalid analysis context' : !result.buildTestPassed ? '⛔ Build or unit tests failed' : !result.pass ? '⛔ Promotion blocked' : result.failed.length ? '⚠️ Advisory findings or incomplete analyses' : '✅ Security checks passed';
+  const rows = [`| Build and unit tests | ${result.buildTestPassed ? '✅ success' : `⛔ ${cell(result.buildTest || 'missing')}`} | Required for PRs to develop and main |`, ...stages.map(([id, title]) => {
     const job = needs[id];
     const state = job?.outputs?.outcome || job?.result || 'missing';
     let details = 'See job logs and report artifacts';
@@ -26,7 +29,7 @@ async function publish({ github, context, core, needs, technology, language, hos
     if (id === 'sonar_gate' && job?.outputs?.gate) details = `Gate: ${job.outputs.gate}`;
     if (id === 'ghas_sca' && job?.outputs?.vulnerabilities !== undefined && job.outputs.vulnerabilities !== '') details = `Vulnerable dependency changes: ${job.outputs.vulnerabilities}`;
     return `| ${title} | ${state === 'success' ? '✅' : '⚠️'} ${cell(state)} | ${cell(details)} |`;
-  });
+  })];
   let sonarLink = '';
   try {
     const url = new URL(`${host.replace(/\/$/, '')}/dashboard`);
@@ -36,7 +39,7 @@ async function publish({ github, context, core, needs, technology, language, hos
     sonarLink = ` · [SonarQube report](<${url.href}>)`;
   } catch { /* Configuration errors remain visible in the analysis jobs. */ }
   const body = `${marker}\n## 🛡️ Retail · Pull Request Security Review\n\n**${label}**\n\n` +
-    `Policy: **${result.blocking ? 'mandatory · main' : 'advisory · develop'}** · Stack: **${cell(technology)} / ${cell(language)}**\n\n` +
+    `Security policy: **${result.blocking ? 'mandatory · main' : 'advisory · develop'}** · Build/tests: **required** · Stack: **${cell(technology)} / ${cell(language)}**\n\n` +
     `| Control | Execution | Details |\n|---|---|---|\n${rows.join('\n')}\n\n` +
     `[Actions run and artifacts](${run}) · [Code scanning alerts](${security})${sonarLink}\n\n` +
     '<details><summary>Scope and interpretation</summary>\n\n' +
@@ -44,7 +47,7 @@ async function publish({ github, context, core, needs, technology, language, hos
     '- Dependency Review evaluates dependency changes and high/critical known vulnerabilities, not a complete inventory scan.\n' +
     '- SonarQube evaluates new-code conditions configured in its Quality Gate. Security hotspots need human review.\n' +
     '- Failed, missing, cancelled or skipped mandatory analyses never count as passed.\n' +
-    '- Unit tests remain in develop and pre-deployment CI; this PR pipeline focuses on static security and code quality.\n\n</details>\n\n' +
+    '- Build and unit tests are required for every PR. GHAS and SonarQube findings are advisory for develop and mandatory for main.\n\n</details>\n\n' +
     `Analyzed PR head: \`${cell(context.payload.pull_request?.head?.sha)}\` · Run attempt: ${cell(process.env.GITHUB_RUN_ATTEMPT || '1')}\n`;
   fs.writeFileSync('pr-security-report.md', body);
   await core.summary.addRaw(body).write();
@@ -63,6 +66,6 @@ async function publish({ github, context, core, needs, technology, language, hos
       }
     } catch (error) { core.warning(`PR comment could not be updated (HTTP ${error.status || 'unknown'}). Report remains in Actions.`); }
   } else core.notice('Fork PR: report published in Actions only; no elevated token is used.');
-  if (!result.pass) core.setFailed('Required security policy did not pass. See the report above.');
+  if (!result.pass) core.setFailed('Required PR build, unit tests or security policy did not pass. See the report above.');
 }
 module.exports = { decision, publish };
