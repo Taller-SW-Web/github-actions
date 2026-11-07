@@ -1,6 +1,14 @@
 module.exports = async function validate({ github, context, rollback, tag, triggeringActor, report = () => {} }) {
-  if (context.ref !== 'refs/heads/main' || !['push', 'workflow_dispatch'].includes(context.eventName)) {
-    throw new Error('Production workflows must run from main');
+  if (!['push', 'workflow_dispatch'].includes(context.eventName)) {
+    throw new Error('Production workflows require push or workflow_dispatch');
+  }
+  if (rollback) {
+    if (context.eventName !== 'workflow_dispatch' || !tag ||
+        !['refs/heads/main', `refs/tags/${tag}`].includes(context.ref)) {
+      throw new Error('For rollback, select a production tag in Use workflow from and enable the rollback checkbox');
+    }
+  } else if (context.ref !== 'refs/heads/main') {
+    throw new Error('Normal production deployments must run from main');
   }
   const repo = context.repo;
   let denied = false;
@@ -27,7 +35,6 @@ module.exports = async function validate({ github, context, rollback, tag, trigg
     if (tag) throw new Error('A release tag requires the rollback checkbox');
     return context.sha;
   }
-  if (context.eventName !== 'workflow_dispatch') throw new Error('Rollback requires workflow_dispatch');
   const match = /^production-(\d+)-(\d+)$/.exec(tag);
   if (!match) throw new Error('Select a production-<run_id>-<attempt> release tag');
   const { data: ref } = await github.rest.git.getRef({ ...repo, ref: `tags/${tag}` });
